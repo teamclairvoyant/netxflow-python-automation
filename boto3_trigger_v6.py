@@ -4,60 +4,12 @@ import argparse
 import datetime
 import time
 
-ec2 = boto3.client('ec2', region_name="us-east-1")
-ec2_client = boto3.client("batch", region_name="us-east-1")
 now = datetime.datetime.now()
-timestamp_str = "[" + now.strftime("%Y-%m-%d %H:%M:%S") + "]"
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--launch_template_name', dest='launch_template_name', required=True)
-parser.add_argument('--key_name', dest='key_name', required=True)
-parser.add_argument('--s3_bucket', dest='s3_bucket', required=True)
-parser.add_argument('--s3_logging_dir', dest='s3_logging_dir', required=True)
-parser.add_argument('--s3_result', dest='s3_result', required=True)
-parser.add_argument('--max_vCpus', dest='max_vCpus', required=True)
-parser.add_argument('--compute_environment_name', dest='compute_environment_name', required=True)
-parser.add_argument('--instance_role', dest='instance_role', required=True)
-parser.add_argument('--security_groupId', dest='security_groupId', required=True)
-parser.add_argument('--job_queue_name', dest='job_queue_name', required=True)
-parser.add_argument('--s3_data', dest='s3_data', required=True)
-parser.add_argument('--script_name', dest='script_name', required=True)
-parser.add_argument('--config_file_name', dest='config_file_name', required=True)
-parser.add_argument('--subnet1', dest='subnet1', required=True)
-parser.add_argument('--subnet2', dest='subnet2', required=True)
-parser.add_argument('--subnet3', dest='subnet3', required=True)
-parser.add_argument('--subnet4', dest='subnet4', required=True)
-parser.add_argument('--subnet5', dest='subnet5', required=True)
-parser.add_argument('--subnet6', dest='subnet6', required=True)
-parser.add_argument('--result_location', dest='result_location', required=True)
-args = parser.parse_args()
-
-launch_template_name = args.launch_template_name
-key_name = args.key_name
-s3_bucket = args.s3_bucket
-max_vCpus = args.max_vCpus
-s3fs_mount = '/test'
-compute_environment_name = args.compute_environment_name
-allocationStrategy = 'optimal'
-instance_role = args.instance_role
-security_groupId = args.security_groupId
-job_queue_name = args.job_queue_name
-s3_data = args.s3_data
-s3_logging_dir = args.s3_logging_dir
-script_name = args.script_name
-config_file_name = args.config_file_name
-subnet1 = args.subnet1
-subnet2 = args.subnet2
-subnet3 = args.subnet3
-subnet4 = args.subnet4
-subnet5 = args.subnet5
-subnet6 = args.subnet6
-result_location = args.result_location
 
 
-def create_launch_template():
+def create_launch_template(ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket):
     # Use the describe_launch_templates() method to retrieve a list of all launch templates
-    launch_template_response = ec2.describe_launch_templates()
+    launch_template_response = ec2_client.describe_launch_templates()
 
     # Extract the LaunchTemplates list from the response
     launch_templates = launch_template_response['LaunchTemplates']
@@ -68,16 +20,16 @@ def create_launch_template():
         user_data = "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=""==MYBOUNDARY==""\n\n --==MYBOUNDARY" \
                     "==\nContent-Type: text/x-shellscript; charset=""us-ascii""\n\n#!/bin/bash\n#!/bin/bash -xe\nsudo " \
                     "amazon-linux-extras install epel -y\nsudo yum install s3fs-fuse -y\nmkdir " \
-                    "/test\nchmod 777 /test\nsudo s3fs " \
-                    + s3_bucket + "/test -o allow_other -o " \
-                                  "umask=000 " \
-                                  "-o iam_role=auto""\n\n--==MYBOUNDARY==-- "
+                    + s3fs_mount + "\nchmod 777 " + s3fs_mount + "\nsudo s3fs " \
+                    + s3_bucket + " " + s3fs_mount + " -o allow_other -o " \
+                                                     "umask=000 " \
+                                                     "-o iam_role=auto""\n\n--==MYBOUNDARY==-- "
 
         encoded_user_data = base64.b64encode(user_data.encode()).decode()
 
         response = ec2.create_launch_template(
             LaunchTemplateName=launch_template_name,
-            VersionDescription='this is test',
+            VersionDescription='Launch template for running Nextflow on AWS Batch',
             LaunchTemplateData={
                 'KeyName': key_name,
                 'UserData': encoded_user_data
@@ -85,16 +37,19 @@ def create_launch_template():
         )
     else:
         print(
-            timestamp_str + "The Launch Template : " + launch_template_name + "has already been created. Hence, moving with next "
-                                                                              "process")
+            now.strftime(
+                "%Y-%m-%d %H:%M:%S") + "The Launch Template : " + launch_template_name + "has already been created. Hence, moving with next "
+                                                                                         "process")
 
 
-def create_compute():
-    response = ec2_client.describe_compute_environments()
+def create_compute(batch_client, compute_environment_name, allocationStrategy, max_vCpus, security_groupId, subnet1,
+                   subnet2, subnet3,
+                   subnet4, subnet5, subnet6):
+    response = batch_client.describe_compute_environments()
 
     compute_environment_names = [env['computeEnvironmentName'] for env in response['computeEnvironments']]
 
-    if computeEnvironmentName not in compute_environment_names:
+    if compute_environment_name not in compute_environment_names:
         response1 = client.create_compute_environment(
             computeEnvironmentName=compute_environment_name,
             type='MANAGED',
@@ -124,14 +79,14 @@ def create_compute():
         )
         print(response1)
     else:
-        print(timestamp_str +
-              "The Compute Environment : " + compute_environment_name + "has already been created. Hence, moving with the next process")
+        print(now.strftime("%Y-%m-%d %H:%M:%S") +
+              "The Compute Environment : " + compute_environment_name + " has already been created. Hence, moving with the next process")
 
 
-def create_queue():
-    response = ec2_client.describe_job_queues()
+def create_queue(batch_client, job_queue_name, compute_environment_name):
+    response = batch_client.describe_job_queues()
     queue_names = [queue['jobQueueName'] for queue in response['jobQueues']]
-    if jobQueueName not in queue_names:
+    if job_queue_name not in queue_names:
         response = client.create_job_queue(
             jobQueueName=job_queue_name,
             state='ENABLED',
@@ -145,12 +100,14 @@ def create_queue():
         )
         print(response)
     else:
-        print(timestamp_str +
-              "The Compute Environment : " + compute_environment_name + "has already been created. Hence, moving with the next process")
+        print(now.strftime("%Y-%m-%d %H:%M:%S") +
+              "The Job Queue : " + job_queue_name + " has already been created. Hence, moving with the next process")
 
 
-def create_instance():
-    instances = ec2.run_instances(
+def create_instance(ec2_client, key_name, instance_role, s3_data, s3_bucket, result_location, script_name,
+                    config_file_name,
+                    s3_logging_dir, s3_result, subnet1, security_groupId):
+    instances = ec2_client.run_instances(
         ImageId="ami-0b0dcb5067f052a63",
         MinCount=1,
         MaxCount=1,
@@ -166,12 +123,12 @@ def create_instance():
                      aws s3 sync """ + s3_data + """ /home/ec2-user/
                      sudo chmod 777 /home/ec2-user/nextflow 
                      cd /home/ec2-user
-                     mkdir rnaseq
-                     sudo s3fs """ + s3_bucket + """ """ + result_location + """ -o allow_other -o umask=000 -o iam_role=auto 
-                     ./nextflow run /home/ec2-user/""" + script_name + """-c """ + config_file_name + """ -bucket-dir """ + s3_logging_dir + """ --outdir=""" + s3_result
-                     + """ cd /home/ec2-user/ 
+                     mkdir """ + result_location +
+                 """ sudo s3fs """ + s3_bucket + """ """ + result_location + """ -o allow_other -o umask=000 -o iam_role=auto 
+                     ./nextflow run /home/ec2-user/""" + script_name + """ -c """ + config_file_name + """ -bucket-dir """ + s3_logging_dir + """ --outdir=""" + s3_result
+                 + """ cd /home/ec2-user/ 
                      touch done.txt
-                     aws s3 cp /home/ec2-user/done.txt s3://harshal-redshift-training/2000864/RNA-Seq_Pipeline1.0/""",
+                     aws s3 cp /home/ec2-user/done.txt """ "s3://" + s3_bucket + "/" + result_location,
         NetworkInterfaces=[
             {
                 'AssociatePublicIpAddress': True,
@@ -182,40 +139,98 @@ def create_instance():
             },
         ]
     )
-    print(timestamp_str +
-          "The instance : " + instances["Instances"][0][
-              "InstanceId"] + "has been created and the nextflow script" + script_name + "has been triggered")
+    print(now.strftime("%Y-%m-%d %H:%M:%S") +
+          " The instance : " + instances["Instances"][0][
+              "InstanceId"] + " has been created and the nextflow script " + script_name + " has been triggered")
     return instances["Instances"][0]["InstanceId"]
 
 
-def check_result(id1):
+def check_result(s3, s3_bucket, id_instance, result_location):
     bucket_name = s3_bucket
     file_path = result_location + "done.txt"
-    s3 = boto3.client('s3')
 
     while True:
         try:
             s3.head_object(Bucket=bucket_name, Key=file_path)
         except:
-            print(timestamp_str + "File does not exist in S3 bucket. Checking again in 5 mins.")
+            print(now.strftime("%Y-%m-%d %H:%M:%S") + " File does not exist in S3 bucket. Checking again in 5 mins.")
             time.sleep(300)
         else:
             # File exists, terminate EC2 instance
-            instance_id = id1
+            instance_id = id_instance
             ec2.terminate_instances(InstanceIds=[instance_id])
-            print("EC2 instance terminated.")
+            print(
+                now.strftime("%Y-%m-%d %H:%M:%S") + " EC2 instance has been terminated and the Nextflow script "
+                                                    "execution is finished")
             break
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--launch_template_name', dest='launch_template_name', required=True)
+    parser.add_argument('--key_name', dest='key_name', required=True)
+    parser.add_argument('--region_name', dest='region_name', required=True)
+    parser.add_argument('--s3_bucket', dest='s3_bucket', required=True)
+    parser.add_argument('--s3_logging_dir', dest='s3_logging_dir', required=True)
+    parser.add_argument('--s3_result', dest='s3_result', required=True)
+    parser.add_argument('--max_vCpus', dest='max_vCpus', required=True)
+    parser.add_argument('--compute_environment_name', required=True)
+    parser.add_argument('--instance_role', dest='instance_role', required=True)
+    parser.add_argument('--security_groupId', dest='security_groupId', required=True)
+    parser.add_argument('--job_queue_name', dest='job_queue_name', required=True)
+    parser.add_argument('--s3_data', dest='s3_data', required=True)
+    parser.add_argument('--script_name', dest='script_name', required=True)
+    parser.add_argument('--config_file_name', dest='config_file_name', required=True)
+    parser.add_argument('--subnet1', dest='subnet1', required=True)
+    parser.add_argument('--subnet2', dest='subnet2', required=True)
+    parser.add_argument('--subnet3', dest='subnet3', required=True)
+    parser.add_argument('--subnet4', dest='subnet4', required=True)
+    parser.add_argument('--subnet5', dest='subnet5', required=True)
+    parser.add_argument('--subnet6', dest='subnet6', required=True)
+    parser.add_argument('--result_location', dest='result_location', required=True)
+    args = parser.parse_args()
+
+    launch_template_name = args.launch_template_name
+    region_name = args.region_name
+    key_name = args.key_name
+    s3_bucket = args.s3_bucket
+    max_vCpus = args.max_vCpus
+    s3fs_mount = '/s3fs_mount'
+    compute_environment_name = args.compute_environment_name
+    allocationStrategy = 'optimal'
+    instance_role = args.instance_role
+    security_groupId = args.security_groupId
+    job_queue_name = args.job_queue_name
+    s3_data = args.s3_data
+    s3_logging_dir = args.s3_logging_dir
+    s3_result = args.s3_result
+    script_name = args.script_name
+    config_file_name = args.config_file_name
+    subnet1 = args.subnet1
+    subnet2 = args.subnet2
+    subnet3 = args.subnet3
+    subnet4 = args.subnet4
+    subnet5 = args.subnet5
+    subnet6 = args.subnet6
+    result_location = args.result_location
+
+    ec2_client = boto3.client('ec2', region_name=region_name)
+    batch_client = boto3.client("batch", region_name=region_name)
+    s3 = boto3.client('s3')
+
     try:
-        create_launch_template()
-        create_compute()
-        create_queue()
-        instance_id = create_instance()
-        create_result(instance_id)
+        create_launch_template(ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket)
+        create_compute(batch_client, compute_environment_name, allocationStrategy, max_vCpus, security_groupId, subnet1,
+                       subnet2,
+                       subnet3, subnet4, subnet5, subnet6)
+        create_queue(batch_client, job_queue_name, compute_environment_name)
+        instance_id = create_instance(ec2_client, key_name, instance_role, s3_data, s3_bucket, result_location,
+                                      script_name,
+                                      config_file_name, s3_logging_dir, s3_result, subnet1, security_groupId)
+        check_result(s3, s3_bucket, instance_id, result_location)
+
     except Exception as e:
-        print("Following error occurred  : " + str(e))
+        print(now.strftime("%Y-%m-%d %H:%M:%S") + "Following error occurred  : " + str(e))
 
 
 if __name__ == "__main__":
