@@ -27,7 +27,7 @@ def create_launch_template(ec2_client, launch_template_name, key_name, s3fs_moun
 
         encoded_user_data = base64.b64encode(user_data.encode()).decode()
 
-        response = ec2.create_launch_template(
+        response = ec2_client.create_launch_template(
             LaunchTemplateName=launch_template_name,
             VersionDescription='Launch template for running Nextflow on AWS Batch',
             LaunchTemplateData={
@@ -38,19 +38,19 @@ def create_launch_template(ec2_client, launch_template_name, key_name, s3fs_moun
     else:
         print(
             now.strftime(
-                "%Y-%m-%d %H:%M:%S") + "The Launch Template : " + launch_template_name + "has already been created. Hence, moving with next "
+                "%Y-%m-%d %H:%M:%S") + "The Launch Template : " + launch_template_name + " has already been created. Hence, moving with next "
                                                                                          "process")
 
 
 def create_compute(batch_client, compute_environment_name, allocationStrategy, max_vCpus, security_groupId, subnet1,
                    subnet2, subnet3,
-                   subnet4, subnet5, subnet6):
+                   subnet4, subnet5, subnet6,launch_template):
     response = batch_client.describe_compute_environments()
 
     compute_environment_names = [env['computeEnvironmentName'] for env in response['computeEnvironments']]
 
     if compute_environment_name not in compute_environment_names:
-        response1 = client.create_compute_environment(
+        response1 = batch_client.create_compute_environment(
             computeEnvironmentName=compute_environment_name,
             type='MANAGED',
             state='ENABLED',
@@ -74,7 +74,8 @@ def create_compute(batch_client, compute_environment_name, allocationStrategy, m
                 ],
                 'instanceTypes': [
                     'optimal',
-                ]
+                ],
+                'launchTemplate': launch_template
             }
         )
         print(response1)
@@ -213,6 +214,10 @@ def main():
     subnet5 = args.subnet5
     subnet6 = args.subnet6
     result_location = args.result_location
+    launch_template = {
+        'launchTemplateName': launch_template_name,
+        'version': '$Latest'
+    }
 
     ec2_client = boto3.client('ec2', region_name=region_name)
     batch_client = boto3.client("batch", region_name=region_name)
@@ -222,7 +227,7 @@ def main():
         create_launch_template(ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket)
         create_compute(batch_client, compute_environment_name, allocationStrategy, max_vCpus, security_groupId, subnet1,
                        subnet2,
-                       subnet3, subnet4, subnet5, subnet6)
+                       subnet3, subnet4, subnet5, subnet6, launch_template)
         create_queue(batch_client, job_queue_name, compute_environment_name)
         instance_id = create_instance(ec2_client, key_name, instance_role, s3_data, s3_bucket, result_location,
                                       script_name,
