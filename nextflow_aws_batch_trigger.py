@@ -4,7 +4,6 @@ import argparse
 import datetime
 import time
 import logging
-import signal
 
 logging.getLogger().setLevel(logging.DEBUG)
 logging.basicConfig(filename="example.log", level=logging.INFO)
