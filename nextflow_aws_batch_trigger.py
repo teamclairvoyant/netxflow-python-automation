@@ -7,7 +7,7 @@ import logging
 import signal
 
 logging.getLogger().setLevel(logging.DEBUG)
-logging.basicConfig(filename="nextflow_trigger.log", level=logging.INFO)
+logging.basicConfig(filename="example.log", level=logging.INFO)
 
 
 def create_launch_template(
@@ -175,11 +175,10 @@ def create_instance(
     return instances["Instances"][0]["InstanceId"]
 
 
-def check_result(ec2_client, s3, s3_bucket, id_instance, result_location):
+def check_result(ec2_client, s3, s3_bucket, id_instance, result_location, timeout):
     bucket_name = s3_bucket
     file_path = result_location + "done.txt"
 
-    timeout = 3600  # in seconds
     start_time = time.time()
 
     while True:
@@ -251,6 +250,7 @@ def main():
     config_file_name = args.config_file_name
     subnets = args.subnets
     subnet1 = subnets[0]
+    timeout = 25200
     result_location = args.result_location
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
 
@@ -288,7 +288,7 @@ def main():
             subnet1,
             security_groupId,
         )
-        check_result(ec2_client, s3, s3_bucket, instance_id, result_location)
+        check_result(ec2_client, s3, s3_bucket, instance_id, result_location,timeout)
 
     except Exception as e:
         logging.error(f"Following error occurred: {str(e)}")
