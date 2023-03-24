@@ -7,7 +7,7 @@ import logging
 import signal
 
 logging.getLogger().setLevel(logging.DEBUG)
-logging.basicConfig(filename="example.log", level=logging.INFO)
+logging.basicConfig(filename="nextflow_trigger.log", level=logging.INFO)
 
 
 def create_launch_template(
