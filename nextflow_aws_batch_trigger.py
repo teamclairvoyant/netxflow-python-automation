@@ -237,6 +237,7 @@ def main():
     parser.add_argument("--config_file_name", dest="config_file_name", required=True)
     parser.add_argument("--subnets", dest="subnets", nargs="+", required=True)
     parser.add_argument("--result_location", dest="result_location", required=True)
+    parser.add_argument("--secret_id", dest="secret_id", required=True)
     args = parser.parse_args()
 
     launch_template_name = args.launch_template_name
@@ -259,6 +260,7 @@ def main():
     subnet1 = subnets[0]
     timeout = 25200
     result_location = args.result_location
+    secret_id = args.secret_id
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
 
     ec2_client = boto3.client("ec2", region_name=region_name)
@@ -267,7 +269,7 @@ def main():
 
     try:
         create_launch_template(
-            ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket
+            ec2_client, launch_template_name, key_name, region_name, s3fs_mount, s3_bucket, secret_id
         )
         time.sleep(60)
         create_compute(
