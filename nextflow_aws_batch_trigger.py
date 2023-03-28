@@ -25,7 +25,7 @@ def create_launch_template(
             """runcmd:\n"""
             """- amazon-linux-extras install epel -y\n"""
             """- yum install s3fs-fuse -y\n"""
-            """- /usr/bin/aws configure set region $(curl http://169.254.169.254/latest/meta-data/placement/region)\n"""
+            f"""- /usr/bin/aws configure set region {region_name}\n"""
             f"""- export SECRET_STRING=$(/usr/bin/aws secretsmanager get-secret-value --secret-id {secret_id} | jq -r '.SecretString')\n"""
             """- export USERNAME=$(echo $SECRET_STRING | jq -r '.username')\n"""
             """- export PASSWORD=$(echo $SECRET_STRING | jq -r '.password')\n"""
