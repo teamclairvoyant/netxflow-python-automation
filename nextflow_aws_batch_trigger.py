@@ -19,23 +19,24 @@ def create_launch_template(
     launch_template_names = [i["LaunchTemplateName"] for i in launch_templates]
 
     if launch_template_name not in launch_template_names:
-        user_data = f"""\
-                    MIME-Version: 1.0
-                    Content-Type: multipart/mixed; boundary= ==MYBOUNDARY==
-
-                    --==MYBOUNDARY==
-                    Content-Type: text/x-shellscript; charset=us-ascii
-
-                    #!/bin/bash
-                    #!/bin/bash -xe
-                    sudo amazon-linux-extras install epel -y
-                    sudo yum install s3fs-fuse -y
-                    mkdir {s3fs_mount}
-                    mkdir {result_location}
-                    chmod 777 {s3fs_mount}
-                    sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto
-
-                    --==MYBOUNDARY==--"""
+        user_data = """MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="==MYBOUNDARY=="\n\n--==MYBOUNDARY==\n""" \
+                    """Content-Type: text/cloud-config; charset="us-ascii"\n\npackages:\n- jq\n- aws-cli\n\n""" \
+                    """runcmd:\n""" \
+                    """- amazon-linux-extras install epel -y\n""" \
+                    """- yum install s3fs-fuse -y\n""" \
+                    """- /usr/bin/aws configure set region $(curl http://169.254.169.254/latest/meta-data/placement/region)\n""" \
+                    f"""- export SECRET_STRING=$(/usr/bin/aws secretsmanager get-secret-value --secret-id {secret_id} | jq -r '.SecretString')\n""" \
+                    """- export USERNAME=$(echo $SECRET_STRING | jq -r '.username')\n""" \
+                    """- export PASSWORD=$(echo $SECRET_STRING | jq -r '.password')\n""" \
+                    """- export REGISTRY_URL=$(echo $SECRET_STRING | jq -r '.registry_url')\n""" \
+                    """- echo $PASSWORD | docker login --username $USERNAME --password-stdin $REGISTRY_URL\n""" \
+                    """- export AUTH=$(cat ~/.docker/config.json | jq -c .auths)\n""" \
+                    """- echo 'ECS_ENGINE_AUTH_TYPE=dockercfg' >> /etc/ecs/ecs.config\n""" \
+                    """- echo "ECS_ENGINE_AUTH_DATA=$AUTH" >> /etc/ecs/ecs.config\n""" \
+                    f"""- mkdir {s3fs_mount} \n""" \
+                    f"""- chmod 777 {s3fs_mount} \n""" \
+                    f"""- sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto\n\n""" \
+                    """--==MYBOUNDARY==--\n"""
 
         encoded_user_data = base64.b64encode(user_data.encode()).decode()
 
@@ -69,7 +70,7 @@ def create_compute(
     ]
 
     if compute_environment_name not in compute_environment_names:
-        response1 = batch_client.create_compute_environment(
+        response = batch_client.create_compute_environment(
             computeEnvironmentName=compute_environment_name,
             type="MANAGED",
             state="ENABLED",
@@ -238,7 +239,7 @@ def main():
     max_vCpus = args.max_vCpus
     s3fs_mount = "/s3fs_mount"
     compute_environment_name = args.compute_environment_name
-    allocationStrategy = "BEST_FIT"
+    allocationStrategy = "BEST_FIT_PROGRESSIVE"
     instance_role = args.instance_role
     security_groupId = args.security_groupId
     job_queue_name = args.job_queue_name
@@ -261,6 +262,7 @@ def main():
         create_launch_template(
             ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket
         )
+        time.sleep(60)
         create_compute(
             batch_client,
             compute_environment_name,
