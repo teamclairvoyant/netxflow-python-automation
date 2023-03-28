@@ -10,35 +10,40 @@ logging.basicConfig(filename="example.log", level=logging.INFO)
 
 
 def create_launch_template(
-    ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket
+    ec2_client,
+    launch_template_name,
+    key_name,
+    region_name,
+    s3fs_mount,
+    s3_bucket,
+    secret_id,
 ):
+    # Use the describe_launch_templates() method to retrieve a list of all launch templates
     launch_template_response = ec2_client.describe_launch_templates()
 
+    # Extract the LaunchTemplates list from the response
     launch_templates = launch_template_response["LaunchTemplates"]
 
     launch_template_names = [i["LaunchTemplateName"] for i in launch_templates]
 
     if launch_template_name not in launch_template_names:
-        user_data = (
-            """MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="==MYBOUNDARY=="\n\n--==MYBOUNDARY==\n"""
-            """Content-Type: text/cloud-config; charset="us-ascii"\n\npackages:\n- jq\n- aws-cli\n\n"""
-            """runcmd:\n"""
-            """- amazon-linux-extras install epel -y\n"""
-            """- yum install s3fs-fuse -y\n"""
-            f"""- /usr/bin/aws configure set region {region_name}\n"""
-            f"""- export SECRET_STRING=$(/usr/bin/aws secretsmanager get-secret-value --secret-id {secret_id} | jq -r '.SecretString')\n"""
-            """- export USERNAME=$(echo $SECRET_STRING | jq -r '.username')\n"""
-            """- export PASSWORD=$(echo $SECRET_STRING | jq -r '.password')\n"""
-            """- export REGISTRY_URL=$(echo $SECRET_STRING | jq -r '.registry_url')\n"""
-            """- echo $PASSWORD | docker login --username $USERNAME --password-stdin $REGISTRY_URL\n"""
-            """- export AUTH=$(cat ~/.docker/config.json | jq -c .auths)\n"""
-            """- echo 'ECS_ENGINE_AUTH_TYPE=dockercfg' >> /etc/ecs/ecs.config\n"""
-            """- echo "ECS_ENGINE_AUTH_DATA=$AUTH" >> /etc/ecs/ecs.config\n"""
-            f"""- mkdir {s3fs_mount} \n"""
-            f"""- chmod 777 {s3fs_mount} \n"""
-            f"""- sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto\n\n"""
-            """--==MYBOUNDARY==--\n"""
-        )
+        user_data = f"""MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="==MYBOUNDARY=="\n\n--==MYBOUNDARY==
+Content-Type: text/cloud-config; charset="us-ascii"\n\npackages:\n- jq\n- aws-cli\n
+runcmd:
+- amazon-linux-extras install epel -y
+- yum install s3fs-fuse -y
+- /usr/bin/aws configure set region {region_name}
+- export SECRET_STRING=$(/usr/bin/aws secretsmanager get-secret-value --secret-id {secret_id} | jq -r '.SecretString')
+- export USERNAME=$(echo $SECRET_STRING | jq -r '.username')
+- export PASSWORD=$(echo $SECRET_STRING | jq -r '.password')
+- export REGISTRY_URL=$(echo $SECRET_STRING | jq -r '.registry_url')
+- echo $PASSWORD | docker login --username $USERNAME --password-stdin $REGISTRY_URL
+- export AUTH=$(cat ~/.docker/config.json | jq -c .auths)
+- echo 'ECS_ENGINE_AUTH_TYPE=dockercfg' >> /etc/ecs/ecs.config
+- echo "ECS_ENGINE_AUTH_DATA=$AUTH" >> /etc/ecs/ecs.config
+- chmod 777 {s3fs_mount} 
+- sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto\n
+--==MYBOUNDARY==--\n"""
 
         encoded_user_data = base64.b64encode(user_data.encode()).decode()
 
