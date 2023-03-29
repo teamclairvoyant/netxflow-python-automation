@@ -10,32 +10,40 @@ logging.basicConfig(filename="example.log", level=logging.INFO)
 
 
 def create_launch_template(
-    ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket
+    ec2_client,
+    launch_template_name,
+    key_name,
+    region_name,
+    s3fs_mount,
+    s3_bucket,
+    secret_id,
 ):
+    # Use the describe_launch_templates() method to retrieve a list of all launch templates
     launch_template_response = ec2_client.describe_launch_templates()
 
+    # Extract the LaunchTemplates list from the response
     launch_templates = launch_template_response["LaunchTemplates"]
 
     launch_template_names = [i["LaunchTemplateName"] for i in launch_templates]
 
     if launch_template_name not in launch_template_names:
-        user_data = f"""\
-                    MIME-Version: 1.0
-                    Content-Type: multipart/mixed; boundary= ==MYBOUNDARY==
-
-                    --==MYBOUNDARY==
-                    Content-Type: text/x-shellscript; charset=us-ascii
-
-                    #!/bin/bash
-                    #!/bin/bash -xe
-                    sudo amazon-linux-extras install epel -y
-                    sudo yum install s3fs-fuse -y
-                    mkdir {s3fs_mount}
-                    mkdir {result_location}
-                    chmod 777 {s3fs_mount}
-                    sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto
-
-                    --==MYBOUNDARY==--"""
+        user_data = f"""MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="==MYBOUNDARY=="\n\n--==MYBOUNDARY==
+Content-Type: text/cloud-config; charset="us-ascii"\n\npackages:\n- jq\n- aws-cli\n
+runcmd:
+- amazon-linux-extras install epel -y
+- yum install s3fs-fuse -y
+- /usr/bin/aws configure set region {region_name}
+- export SECRET_STRING=$(/usr/bin/aws secretsmanager get-secret-value --secret-id {secret_id} | jq -r '.SecretString')
+- export USERNAME=$(echo $SECRET_STRING | jq -r '.username')
+- export PASSWORD=$(echo $SECRET_STRING | jq -r '.password')
+- export REGISTRY_URL=$(echo $SECRET_STRING | jq -r '.registry_url')
+- echo $PASSWORD | docker login --username $USERNAME --password-stdin $REGISTRY_URL
+- export AUTH=$(cat ~/.docker/config.json | jq -c .auths)
+- echo 'ECS_ENGINE_AUTH_TYPE=dockercfg' >> /etc/ecs/ecs.config
+- echo "ECS_ENGINE_AUTH_DATA=$AUTH" >> /etc/ecs/ecs.config
+- chmod 777 {s3fs_mount} 
+- sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto\n
+--==MYBOUNDARY==--\n"""
 
         encoded_user_data = base64.b64encode(user_data.encode()).decode()
 
@@ -69,7 +77,7 @@ def create_compute(
     ]
 
     if compute_environment_name not in compute_environment_names:
-        response1 = batch_client.create_compute_environment(
+        response = batch_client.create_compute_environment(
             computeEnvironmentName=compute_environment_name,
             type="MANAGED",
             state="ENABLED",
@@ -229,6 +237,7 @@ def main():
     parser.add_argument("--config_file_name", dest="config_file_name", required=True)
     parser.add_argument("--subnets", dest="subnets", nargs="+", required=True)
     parser.add_argument("--result_location", dest="result_location", required=True)
+    parser.add_argument("--secret_id", dest="secret_id", required=True)
     args = parser.parse_args()
 
     launch_template_name = args.launch_template_name
@@ -238,7 +247,7 @@ def main():
     max_vCpus = args.max_vCpus
     s3fs_mount = "/s3fs_mount"
     compute_environment_name = args.compute_environment_name
-    allocationStrategy = "BEST_FIT"
+    allocationStrategy = "BEST_FIT_PROGRESSIVE"
     instance_role = args.instance_role
     security_groupId = args.security_groupId
     job_queue_name = args.job_queue_name
@@ -251,6 +260,7 @@ def main():
     subnet1 = subnets[0]
     timeout = 25200
     result_location = args.result_location
+    secret_id = args.secret_id
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
 
     ec2_client = boto3.client("ec2", region_name=region_name)
@@ -259,8 +269,9 @@ def main():
 
     try:
         create_launch_template(
-            ec2_client, launch_template_name, key_name, s3fs_mount, s3_bucket
+            ec2_client, launch_template_name, key_name, region_name, s3fs_mount, s3_bucket, secret_id
         )
+        time.sleep(60)
         create_compute(
             batch_client,
             compute_environment_name,
@@ -287,7 +298,7 @@ def main():
             subnet1,
             security_groupId,
         )
-        check_result(ec2_client, s3, s3_bucket, instance_id, result_location,timeout)
+        check_result(ec2_client, s3, s3_bucket, instance_id, result_location, timeout)
 
     except Exception as e:
         logging.error(f"Following error occurred: {str(e)}")
