@@ -228,6 +228,27 @@ def check_result(ec2_client, s3, s3_bucket, id_instance, result_location, timeou
 
 
 def main():
+    instances = {
+        "m5.large": 2,
+        "m5.xlarge": 4,
+        "m5.2xlarge": 8,
+        "m5.4xlarge": 16,
+        "m5.8xlarge": 32,
+        "m5.12xlarge": 48,
+        "m5.16xlarge": 64,
+        "m5.24xlarge": 96,
+        "m5.metal": 96,
+        "m5d.large": 2,
+        "m5d.xlarge": 4,
+        "m5d.2xlarge": 8,
+        "m5d.4xlarge": 16,
+        "m5d.8xlarge": 32,
+        "m5d.12xlarge": 48,
+        "m5d.16xlarge": 64,
+        "m5d.24xlarge": 96,
+        "m5d.metal": 96,
+    }
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--launch_template_name", dest="launch_template_name", required=True
@@ -277,12 +298,7 @@ def main():
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
     instance_type = args.instance_type
     instance = [args.instance_type]
-    instances = {
-        "m5.24xlarge": 96,
-        "m5a.24xlarge": 96,
-        "m5n.24xlarge": 96,
-        "m5.metal": 96,
-    }
+
     no_of_instances = args.no_of_instances
 
     ec2_client = boto3.client("ec2", region_name=region_name)
