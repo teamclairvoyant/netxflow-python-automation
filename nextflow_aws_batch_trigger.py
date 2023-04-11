@@ -6,7 +6,19 @@ import time
 import logging
 
 logging.getLogger().setLevel(logging.DEBUG)
-logging.basicConfig(filename="example.log", level=logging.INFO)
+logging.basicConfig(filename="batch_pipeline.log", level=logging.INFO)
+
+
+def determine_maxvcpus(instances, no_of_instances, instance_type):
+    if instance_type not in instances.keys():
+        raise Exception("Not a valid instance type")
+    else:
+        if no_of_instances < 10:
+            cores = no_of_instances * instances[instance_type]
+            return cores
+        else:
+            logging.error("Maximum instance limit reached")
+            raise Exception("Maximum instance limit reached")
 
 
 def create_launch_template(
@@ -41,6 +53,7 @@ runcmd:
 - export AUTH=$(cat ~/.docker/config.json | jq -c .auths)
 - echo 'ECS_ENGINE_AUTH_TYPE=dockercfg' >> /etc/ecs/ecs.config
 - echo "ECS_ENGINE_AUTH_DATA=$AUTH" >> /etc/ecs/ecs.config
+- mkdir {s3fs_mount} 
 - chmod 777 {s3fs_mount} 
 - sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto\n
 --==MYBOUNDARY==--\n"""
@@ -69,6 +82,7 @@ def create_compute(
     subnets,
     instance_role,
     launch_template,
+    instance_type,
 ):
     response = batch_client.describe_compute_environments()
 
@@ -92,9 +106,7 @@ def create_compute(
                 "securityGroupIds": [
                     security_groupId,
                 ],
-                "instanceTypes": [
-                    "optimal",
-                ],
+                "instanceTypes": instance_type,
                 "launchTemplate": launch_template,
             },
         )
@@ -216,6 +228,27 @@ def check_result(ec2_client, s3, s3_bucket, id_instance, result_location, timeou
 
 
 def main():
+    instances = {
+        "m5.large": 2,
+        "m5.xlarge": 4,
+        "m5.2xlarge": 8,
+        "m5.4xlarge": 16,
+        "m5.8xlarge": 32,
+        "m5.12xlarge": 48,
+        "m5.16xlarge": 64,
+        "m5.24xlarge": 96,
+        "m5.metal": 96,
+        "m5d.large": 2,
+        "m5d.xlarge": 4,
+        "m5d.2xlarge": 8,
+        "m5d.4xlarge": 16,
+        "m5d.8xlarge": 32,
+        "m5d.12xlarge": 48,
+        "m5d.16xlarge": 64,
+        "m5d.24xlarge": 96,
+        "m5d.metal": 96,
+    }
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--launch_template_name", dest="launch_template_name", required=True
@@ -225,7 +258,8 @@ def main():
     parser.add_argument("--s3_bucket", dest="s3_bucket", required=True)
     parser.add_argument("--s3_logging_dir", dest="s3_logging_dir", required=True)
     parser.add_argument("--s3_result", dest="s3_result", required=True)
-    parser.add_argument("--max_vCpus", dest="max_vCpus", required=True)
+    parser.add_argument("--no_of_instances", dest="no_of_instances", required=True)
+    parser.add_argument("--instance_type", dest="instance_type", required=True)
     parser.add_argument(
         "--compute_environment_name", dest="compute_environment_name", required=True
     )
@@ -238,16 +272,16 @@ def main():
     parser.add_argument("--subnets", dest="subnets", nargs="+", required=True)
     parser.add_argument("--result_location", dest="result_location", required=True)
     parser.add_argument("--secret_id", dest="secret_id", required=True)
+
     args = parser.parse_args()
 
     launch_template_name = args.launch_template_name
     region_name = args.region_name
     key_name = args.key_name
     s3_bucket = args.s3_bucket
-    max_vCpus = args.max_vCpus
     s3fs_mount = "/s3fs_mount"
     compute_environment_name = args.compute_environment_name
-    allocationStrategy = "BEST_FIT_PROGRESSIVE"
+    allocationStrategy = "BEST_FIT"
     instance_role = args.instance_role
     security_groupId = args.security_groupId
     job_queue_name = args.job_queue_name
@@ -262,14 +296,25 @@ def main():
     result_location = args.result_location
     secret_id = args.secret_id
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
+    instance_type = args.instance_type
+    instance = [args.instance_type]
+
+    no_of_instances = args.no_of_instances
 
     ec2_client = boto3.client("ec2", region_name=region_name)
     batch_client = boto3.client("batch", region_name=region_name)
     s3 = boto3.client("s3")
 
     try:
+        max_vCpus = determine_maxvcpus(no_of_instances, instances, instance_type)
         create_launch_template(
-            ec2_client, launch_template_name, key_name, region_name, s3fs_mount, s3_bucket, secret_id
+            ec2_client,
+            launch_template_name,
+            key_name,
+            region_name,
+            s3fs_mount,
+            s3_bucket,
+            secret_id,
         )
         time.sleep(60)
         create_compute(
@@ -281,6 +326,7 @@ def main():
             subnets,
             instance_role,
             launch_template,
+            instance,
         )
         time.sleep(60)
         create_queue(batch_client, job_queue_name, compute_environment_name)
