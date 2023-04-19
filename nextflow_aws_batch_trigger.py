@@ -9,7 +9,7 @@ logging.getLogger().setLevel(logging.DEBUG)
 logging.basicConfig(filename="batch_pipeline.log", level=logging.INFO)
 
 
-def determine_maxvcpus(instances, no_of_instances, instance_type):
+def determine_maxvcpus(no_of_instances, instances, instance_type):
     if instance_type not in instances.keys():
         raise Exception("Not a valid instance type")
     else:
@@ -22,13 +22,13 @@ def determine_maxvcpus(instances, no_of_instances, instance_type):
 
 
 def create_launch_template(
-    ec2_client,
-    launch_template_name,
-    key_name,
-    region_name,
-    s3fs_mount,
-    s3_bucket,
-    secret_id,
+        ec2_client,
+        launch_template_name,
+        key_name,
+        region_name,
+        s3fs_mount,
+        s3_bucket,
+        secret_id,
 ):
     # Use the describe_launch_templates() method to retrieve a list of all launch templates
     launch_template_response = ec2_client.describe_launch_templates()
@@ -74,15 +74,15 @@ runcmd:
 
 
 def create_compute(
-    batch_client,
-    compute_environment_name,
-    allocationStrategy,
-    max_vCpus,
-    security_groupId,
-    subnets,
-    instance_role,
-    launch_template,
-    instance_type,
+        batch_client,
+        compute_environment_name,
+        allocationStrategy,
+        max_vCpus,
+        security_groupId,
+        subnets,
+        instance_role,
+        launch_template,
+        instance_type
 ):
     response = batch_client.describe_compute_environments()
 
@@ -106,7 +106,8 @@ def create_compute(
                 "securityGroupIds": [
                     security_groupId,
                 ],
-                "instanceTypes": instance_type,
+                "instanceTypes":
+                    instance_type,
                 "launchTemplate": launch_template,
             },
         )
@@ -142,21 +143,22 @@ def create_queue(batch_client, job_queue_name, compute_environment_name):
 
 
 def create_instance(
-    ec2_client,
-    key_name,
-    instance_role,
-    s3_data,
-    s3_bucket,
-    result_location,
-    script_name,
-    config_file_name,
-    s3_logging_dir,
-    s3_result,
-    subnet1,
-    security_groupId,
+        ec2_client,
+        key_name,
+        instance_role,
+        s3_data,
+        s3_bucket,
+        result_location,
+        availability_zone,
+        script_name,
+        config_file_name,
+        s3_logging_dir,
+        s3_result,
+        subnet1,
+        security_groupId,
 ):
     instances = ec2_client.run_instances(
-        ImageId="ami-0b0dcb5067f052a63",
+        ImageId="ami-02d5619017b3e5162",
         MinCount=1,
         MaxCount=1,
         InstanceType="t2.micro",
@@ -173,10 +175,14 @@ def create_instance(
                  cd /home/ec2-user
                  mkdir {result_location}
                  sudo s3fs {s3_bucket} {result_location} -o allow_other -o umask=000 -o iam_role=auto 
-                 ./nextflow run /home/ec2-user/{script_name} -c {config_file_name} -bucket-dir {s3_logging_dir} --outdir={s3_result} 
+                 ./nextflow run /home/ec2-user/{script_name} -c {config_file_name} -bucket-dir {s3_logging_dir} --outdir={s3_result} > nextflow_run.log
                  cd /home/ec2-user/ 
+                 aws s3 cp /home/ec2-user/nextflow_run.log {s3_logging_dir}
                  touch done.txt
                  aws s3 cp /home/ec2-user/done.txt s3://{s3_bucket}/{result_location}""",
+        Placement={
+            'AvailabilityZone': availability_zone
+        },
         NetworkInterfaces=[
             {
                 "AssociatePublicIpAddress": True,
@@ -228,38 +234,25 @@ def check_result(ec2_client, s3, s3_bucket, id_instance, result_location, timeou
 
 
 def main():
-    instances = {
-        "m5.large": 2,
-        "m5.xlarge": 4,
-        "m5.2xlarge": 8,
-        "m5.4xlarge": 16,
-        "m5.8xlarge": 32,
-        "m5.12xlarge": 48,
-        "m5.16xlarge": 64,
-        "m5.24xlarge": 96,
-        "m5.metal": 96,
-        "m5d.large": 2,
-        "m5d.xlarge": 4,
-        "m5d.2xlarge": 8,
-        "m5d.4xlarge": 16,
-        "m5d.8xlarge": 32,
-        "m5d.12xlarge": 48,
-        "m5d.16xlarge": 64,
-        "m5d.24xlarge": 96,
-        "m5d.metal": 96,
-    }
-
+    instances = {"m5.large": 2, "m5.xlarge": 4, "m5.2xlarge": 8, "m5.4xlarge": 16, "m5.8xlarge": 32, "m5.12xlarge": 48,
+                 "m5.16xlarge": 64, "m5.24xlarge": 96, "m5.metal": 96, "m5d.large": 2, "m5d.xlarge": 4,
+                 "m5d.2xlarge": 8,
+                 "m5d.4xlarge": 16, "m5d.8xlarge": 32, "m5d.12xlarge": 48, "m5d.16xlarge": 64, "m5d.24xlarge": 96,
+                 "m5d.metal": 96
+                 }
     parser = argparse.ArgumentParser()
+
     parser.add_argument(
         "--launch_template_name", dest="launch_template_name", required=True
     )
     parser.add_argument("--key_name", dest="key_name", required=True)
     parser.add_argument("--region_name", dest="region_name", required=True)
+    parser.add_argument("--availability_zone", dest='availability_zone', required=True)
     parser.add_argument("--s3_bucket", dest="s3_bucket", required=True)
     parser.add_argument("--s3_logging_dir", dest="s3_logging_dir", required=True)
     parser.add_argument("--s3_result", dest="s3_result", required=True)
-    parser.add_argument("--no_of_instances", dest="no_of_instances", required=True)
-    parser.add_argument("--instance_type", dest="instance_type", required=True)
+    parser.add_argument('--no_of_instances', dest='no_of_instances', type=int, required=True)
+    parser.add_argument('--instance_type', dest='instance_type', required=True)
     parser.add_argument(
         "--compute_environment_name", dest="compute_environment_name", required=True
     )
@@ -277,6 +270,7 @@ def main():
 
     launch_template_name = args.launch_template_name
     region_name = args.region_name
+    availability_zone = args.availability_zone
     key_name = args.key_name
     s3_bucket = args.s3_bucket
     s3fs_mount = "/s3fs_mount"
@@ -308,13 +302,7 @@ def main():
     try:
         max_vCpus = determine_maxvcpus(no_of_instances, instances, instance_type)
         create_launch_template(
-            ec2_client,
-            launch_template_name,
-            key_name,
-            region_name,
-            s3fs_mount,
-            s3_bucket,
-            secret_id,
+            ec2_client, launch_template_name, key_name, region_name, s3fs_mount, s3_bucket, secret_id
         )
         time.sleep(60)
         create_compute(
@@ -326,7 +314,7 @@ def main():
             subnets,
             instance_role,
             launch_template,
-            instance,
+            instance
         )
         time.sleep(60)
         create_queue(batch_client, job_queue_name, compute_environment_name)
@@ -337,6 +325,7 @@ def main():
             s3_data,
             s3_bucket,
             result_location,
+            availability_zone,
             script_name,
             config_file_name,
             s3_logging_dir,
