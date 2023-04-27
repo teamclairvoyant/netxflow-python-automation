@@ -148,6 +148,7 @@ def create_instance(
         instance_role,
         s3_data,
         s3_bucket,
+        output_location,
         result_location,
         availability_zone,
         script_name,
@@ -174,10 +175,10 @@ def create_instance(
                  sudo chmod 777 /home/ec2-user/nextflow 
                  cd /home/ec2-user
                  mkdir {result_location}
-                 sudo s3fs {s3_bucket} {result_location} -o allow_other -o umask=000 -o iam_role=auto 
-                 ./nextflow run /home/ec2-user/{script_name} -c {config_file_name} -bucket-dir {s3_logging_dir} --outdir={s3_result} > nextflow_run.log
+                 sudo s3fs {s3_bucket}:{output_location} {result_location} -o allow_other -o umask=000 -o iam_role=auto 
+                 ./nextflow run /home/ec2-user/{script_name} -c {config_file_name} -bucket-dir {s3_logging_dir} --outdir={s3_result} > main_log.log
                  cd /home/ec2-user/ 
-                 aws s3 cp /home/ec2-user/nextflow_run.log {s3_logging_dir}
+                 aws s3 cp /home/ec2-user/main_log.log {s3_logging_dir}
                  touch done.txt
                  aws s3 cp /home/ec2-user/done.txt s3://{s3_bucket}/{result_location}""",
         Placement={
@@ -264,6 +265,7 @@ def main():
     parser.add_argument("--config_file_name", dest="config_file_name", required=True)
     parser.add_argument("--subnets", dest="subnets", nargs="+", required=True)
     parser.add_argument("--result_location", dest="result_location", required=True)
+    parser.add_argument("--output_location", dest="output_location", required=True)
     parser.add_argument("--secret_id", dest="secret_id", required=True)
 
     args = parser.parse_args()
@@ -288,6 +290,7 @@ def main():
     subnet1 = subnets[0]
     timeout = 25200
     result_location = args.result_location
+    output_location = args.output_location
     secret_id = args.secret_id
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
     instance_type = args.instance_type
@@ -324,6 +327,7 @@ def main():
             instance_role,
             s3_data,
             s3_bucket,
+            output_location,
             result_location,
             availability_zone,
             script_name,
