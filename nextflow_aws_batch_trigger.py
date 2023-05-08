@@ -29,6 +29,7 @@ def create_launch_template(
         s3fs_mount,
         s3_bucket,
         secret_id,
+        output_location
 ):
     # Use the describe_launch_templates() method to retrieve a list of all launch templates
     launch_template_response = ec2_client.describe_launch_templates()
@@ -54,8 +55,11 @@ runcmd:
 - echo 'ECS_ENGINE_AUTH_TYPE=dockercfg' >> /etc/ecs/ecs.config
 - echo "ECS_ENGINE_AUTH_DATA=$AUTH" >> /etc/ecs/ecs.config
 - mkdir {s3fs_mount} 
+- cd /home/ec2-user
+- mkdir rnaseq
 - chmod 777 {s3fs_mount} 
-- sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto\n
+- sudo s3fs {s3_bucket} {s3fs_mount} -o allow_other -o umask=000 -o iam_role=auto
+- sudo s3fs {s3_bucket}:{output_location} /home/ec2-user/rnaseq -o allow_other -o umask=000 -o iam_role=auto\n
 --==MYBOUNDARY==--\n"""
 
         encoded_user_data = base64.b64encode(user_data.encode()).decode()
@@ -148,11 +152,15 @@ def create_instance(
         instance_role,
         s3_data,
         s3_bucket,
+        output_location,
         result_location,
         availability_zone,
         script_name,
         config_file_name,
         s3_logging_dir,
+        endpoint,
+        analysesId,
+        projectId,
         s3_result,
         subnet1,
         security_groupId,
@@ -174,11 +182,16 @@ def create_instance(
                  sudo chmod 777 /home/ec2-user/nextflow 
                  cd /home/ec2-user
                  mkdir {result_location}
-                 sudo s3fs {s3_bucket} {result_location} -o allow_other -o umask=000 -o iam_role=auto 
-                 ./nextflow run /home/ec2-user/{script_name} -c {config_file_name} -bucket-dir {s3_logging_dir} --outdir={s3_result} > nextflow_run.log
+                 sudo s3fs {s3_bucket}:{output_location} {result_location} -o allow_other -o umask=000 -o iam_role=auto 
+                 ./nextflow run /home/ec2-user/{script_name} -c {config_file_name} -bucket-dir {s3_logging_dir} --outdir={s3_result} > main_log.log
                  cd /home/ec2-user/ 
-                 aws s3 cp /home/ec2-user/nextflow_run.log {s3_logging_dir}
+                 aws s3 cp /home/ec2-user/main_log.log {s3_logging_dir}
                  touch done.txt
+                 if grep -q "Succeeded" "/home/ec2-user/main_log.log"; then
+                     curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": "Completed" }}'
+                 else
+                     curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": "Failed" }}' 
+                 fi
                  aws s3 cp /home/ec2-user/done.txt s3://{s3_bucket}/{result_location}""",
         Placement={
             'AvailabilityZone': availability_zone
@@ -200,9 +213,9 @@ def create_instance(
     return instances["Instances"][0]["InstanceId"]
 
 
-def check_result(ec2_client, s3, s3_bucket, id_instance, result_location, timeout):
+def check_result(ec2_client, s3, s3_bucket, id_instance, output_location, result_location, timeout):
     bucket_name = s3_bucket
-    file_path = result_location + "done.txt"
+    file_path = output_location + result_location + "done.txt"
 
     start_time = time.time()
 
@@ -225,7 +238,6 @@ def check_result(ec2_client, s3, s3_bucket, id_instance, result_location, timeou
 
             time.sleep(300)
         else:
-            # File exists, terminate EC2 instance
             instance_id = id_instance
             ec2_client.terminate_instances(InstanceIds=[instance_id])
             logging.info(
@@ -264,7 +276,10 @@ def main():
     parser.add_argument("--config_file_name", dest="config_file_name", required=True)
     parser.add_argument("--subnets", dest="subnets", nargs="+", required=True)
     parser.add_argument("--result_location", dest="result_location", required=True)
+    parser.add_argument("--output_location", dest="output_location", required=True)
     parser.add_argument("--secret_id", dest="secret_id", required=True)
+    parser.add_argument("--analysesId", dest="analysesId", required=True)
+    parser.add_argument("--projectId", dest="projectId", required=True)
 
     args = parser.parse_args()
 
@@ -288,10 +303,14 @@ def main():
     subnet1 = subnets[0]
     timeout = 25200
     result_location = args.result_location
+    output_location = args.output_location
     secret_id = args.secret_id
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
     instance_type = args.instance_type
     instance = [args.instance_type]
+    endpoint = 'http://ec2-54-188-107-210.us-west-2.compute.amazonaws.com:8081/api/v1/analyses'
+    analysesId = args.analysesId
+    projectId = args.projectId
 
     no_of_instances = args.no_of_instances
 
@@ -302,7 +321,7 @@ def main():
     try:
         max_vCpus = determine_maxvcpus(no_of_instances, instances, instance_type)
         create_launch_template(
-            ec2_client, launch_template_name, key_name, region_name, s3fs_mount, s3_bucket, secret_id
+            ec2_client, launch_template_name, key_name, region_name, s3fs_mount, s3_bucket, secret_id, output_location
         )
         time.sleep(60)
         create_compute(
@@ -324,11 +343,15 @@ def main():
             instance_role,
             s3_data,
             s3_bucket,
+            output_location,
             result_location,
             availability_zone,
             script_name,
             config_file_name,
             s3_logging_dir,
+            endpoint,
+            analysesId,
+            projectId,
             s3_result,
             subnet1,
             security_groupId,
