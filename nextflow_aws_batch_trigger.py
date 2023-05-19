@@ -192,7 +192,9 @@ def create_instance(
                  else
                      curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": "Failed" }}' 
                  fi
-                 aws s3 cp /home/ec2-user/done.txt s3://{s3_bucket}/{result_location}""",
+                 aws s3 cp /home/ec2-user/done.txt s3://{s3_bucket}{output_location}
+                 instance_id = $(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                 aws ec2 terminate-instances --instance-ids $instance_id""",
         Placement={
             'AvailabilityZone': availability_zone
         },
@@ -213,10 +215,10 @@ def create_instance(
     return instances["Instances"][0]["InstanceId"]
 
 
-def check_result(ec2_client, s3, s3_bucket, id_instance, output_location, result_location, timeout):
+def terminate(ec2_client, batch_client, s3, s3_bucket, id_instance, output_location, timeout, job_queue_name,
+              compute_environment_name, launch_template):
     bucket_name = s3_bucket
-    file_path = output_location + result_location + "done.txt"
-
+    file_path = output_location[1:] + "done.txt"
     start_time = time.time()
 
     while True:
@@ -234,7 +236,7 @@ def check_result(ec2_client, s3, s3_bucket, id_instance, output_location, result
             s3.head_object(Bucket=bucket_name, Key=file_path)
 
         except:
-            logging.info(" File does not exist in S3 bucket. Checking again in 5 mins.")
+            logging.info(" Process is not yet successful. Checking again in 5 mins.")
 
             time.sleep(300)
         else:
@@ -242,6 +244,25 @@ def check_result(ec2_client, s3, s3_bucket, id_instance, output_location, result
             ec2_client.terminate_instances(InstanceIds=[instance_id])
             logging.info(
                 " Execution of Script is done and the instance has been terminated."
+            )
+
+            response = batch_client.update_job_queue(
+                jobQueue=job_queue_name,
+                state='DISABLED',
+            )
+
+            time.sleep(60)
+            response = batch_client.delete_job_queue(jobQueue=job_queue_name)
+            time.sleep(60)
+
+            response = batch_client.update_compute_environment(computeEnvironment=compute_environment_name,
+                                                               state='DISABLED',
+                                                               )
+            time.sleep(60)
+            response = batch_client.delete_compute_environment(computeEnvironment=compute_environment_name)
+
+            response = ec2_client.delete_launch_template(
+                LaunchTemplateName=launch_template
             )
 
 
@@ -354,9 +375,10 @@ def main():
             projectId,
             s3_result,
             subnet1,
-            security_groupId,
+            security_groupId
         )
-        check_result(ec2_client, s3, s3_bucket, instance_id, result_location, timeout)
+        terminate(ec2_client, batch_client, s3, s3_bucket, instance_id, output_location, timeout, job_queue_name,
+                  compute_environment_name, launch_template)
 
     except Exception as e:
         logging.error(f"Following error occurred: {str(e)}")
