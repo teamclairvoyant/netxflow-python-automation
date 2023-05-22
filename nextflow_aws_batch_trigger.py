@@ -164,6 +164,8 @@ def create_instance(
         s3_result,
         subnet1,
         security_groupId,
+        success_status,
+        failure_status
 ):
     instances = ec2_client.run_instances(
         ImageId="ami-02d5619017b3e5162",
@@ -188,12 +190,12 @@ def create_instance(
                  aws s3 cp /home/ec2-user/main_log.log {s3_logging_dir}
                  touch done.txt
                  if grep -q "Succeeded" "/home/ec2-user/main_log.log"; then
-                     curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": "Completed" }}'
+                     curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": {success_status}}}'
                  else
-                     curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": "Failed" }}' 
+                     curl -X 'PATCH' {endpoint} -H 'accept: */*' -H 'Content-Type: application/json' -d '{{ "analysesId": {analysesId}, "projectId": {projectId}, "status": {failure_status}}}' 
                  fi
                  aws s3 cp /home/ec2-user/done.txt s3://{s3_bucket}{output_location}
-                 instance_id = $(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                 instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
                  aws ec2 terminate-instances --instance-ids $instance_id""",
         Placement={
             'AvailabilityZone': availability_zone
@@ -301,6 +303,9 @@ def main():
     parser.add_argument("--secret_id", dest="secret_id", required=True)
     parser.add_argument("--analysesId", dest="analysesId", required=True)
     parser.add_argument("--projectId", dest="projectId", required=True)
+    parser.add_argument("--endpoint", dest="endpoint", required=True)
+    parser.add_argument("--success_status", dest="success_status", required=True)
+    parser.add_argument("--failure_status", dest="failure_status", required=True)
 
     args = parser.parse_args()
 
@@ -329,9 +334,11 @@ def main():
     launch_template = {"launchTemplateName": launch_template_name, "version": "$Latest"}
     instance_type = args.instance_type
     instance = [args.instance_type]
-    endpoint = 'http://ec2-54-188-107-210.us-west-2.compute.amazonaws.com:8081/api/v1/analyses'
+    endpoint = args.endpoint
     analysesId = args.analysesId
     projectId = args.projectId
+    success_status = args.success_status
+    failure_status = args.failure_status
 
     no_of_instances = args.no_of_instances
 
@@ -375,7 +382,9 @@ def main():
             projectId,
             s3_result,
             subnet1,
-            security_groupId
+            security_groupId,
+            success_status,
+            failure_status
         )
         terminate(ec2_client, batch_client, s3, s3_bucket, instance_id, output_location, timeout, job_queue_name,
                   compute_environment_name, launch_template)
