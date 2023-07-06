@@ -44,7 +44,16 @@ def create_launch_template(
 Content-Type: text/cloud-config; charset="us-ascii"\n\npackages:\n- jq\n- aws-cli\n
 runcmd:
 - amazon-linux-extras install epel -y
-- yum install s3fs-fuse -y
+- sudo sed -i 's/enabled=0/enabled=1/' /etc/yum.repos.d/epel.repo
+- sudo yum install -y gcc libstdc++-devel gcc-c++ fuse fuse-devel curl-devel libxml2-devel mailcap automake openssl-devel git wget
+- wget https://github.com/s3fs-fuse/s3fs-fuse/archive/refs/tags/v1.91.tar.gz
+- tar -xvzf v1.91.tar.gz
+- cd s3fs-fuse-1.91/
+- ./autogen.sh
+- ./configure --prefix=/usr --with-openssl
+- make
+- sudo make install
+- cd /
 - /usr/bin/aws configure set region {region_name}
 - export SECRET_STRING=$(/usr/bin/aws secretsmanager get-secret-value --secret-id {secret_id} | jq -r '.SecretString')
 - export USERNAME=$(echo $SECRET_STRING | jq -r '.username')
@@ -218,7 +227,7 @@ def create_instance(
 
 
 def terminate(ec2_client, batch_client, s3, s3_bucket, id_instance, output_location, timeout, job_queue_name,
-              compute_environment_name, launch_template):
+              compute_environment_name, launch_template_name):
     bucket_name = s3_bucket
     file_path = output_location[1:] + "done.txt"
     start_time = time.time()
@@ -264,7 +273,7 @@ def terminate(ec2_client, batch_client, s3, s3_bucket, id_instance, output_locat
             response = batch_client.delete_compute_environment(computeEnvironment=compute_environment_name)
 
             response = ec2_client.delete_launch_template(
-                LaunchTemplateName=launch_template
+                LaunchTemplateName=launch_template_name
             )
 
 
