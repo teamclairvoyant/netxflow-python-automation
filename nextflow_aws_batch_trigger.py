@@ -13,7 +13,7 @@ def determine_maxvcpus(no_of_instances, instances, instance_type):
     if instance_type not in instances.keys():
         raise Exception("Not a valid instance type")
     else:
-        if no_of_instances < 10:
+        if no_of_instances <= 100:
             cores = no_of_instances * instances[instance_type]
             return cores
         else:
